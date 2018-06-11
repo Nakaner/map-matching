@@ -74,6 +74,7 @@ public class MapMatching {
     private DistanceCalc distanceCalc = new DistancePlaneProjection();
     private final Weighting weighting;
     private final boolean ch;
+    private int matchedUpTo = -1;
 
     public MapMatching(GraphHopper graphHopper, AlgorithmOptions algoOptions) {
         // Convert heading penalty [s] into U-turn penalty [m]
@@ -126,6 +127,14 @@ public class MapMatching {
         this.maxVisitedNodes = algoOptions.getMaxVisitedNodes();
     }
 
+    public boolean matchingAttempted() {
+        return matchedUpTo >= 0;
+    }
+
+    public int getSucessfullyMatchedPoints() {
+        return matchedUpTo;
+    }
+
     public void setDistanceCalc(DistanceCalc distanceCalc) {
         this.distanceCalc = distanceCalc;
     }
@@ -154,6 +163,17 @@ public class MapMatching {
      *                of the graph specified in the constructor
      */
     public MatchResult doWork(List<GPXEntry> gpxList) {
+        return doWork(gpxList, true);
+    }
+
+    /**
+     * This method does the actual map matching.
+     * <p>
+     *
+     * @param gpxList the input list with GPX points which should match to edges
+     *                of the graph specified in the constructor
+     */
+    public MatchResult doWork(List<GPXEntry> gpxList, boolean throwGapException) {
         // filter the entries:
         List<GPXEntry> filteredGPXEntries = filterGPXEntries(gpxList);
 
@@ -205,7 +225,9 @@ public class MapMatching {
         }
 
         // Compute the most likely sequence of map matching candidates:
-        List<SequenceState<GPXExtension, GPXEntry, Path>> seq = computeViterbiSequence(timeSteps, gpxList.size(), queryGraph);
+        List<SequenceState<GPXExtension, GPXEntry, Path>> seq = computeViterbiSequence(timeSteps, gpxList.size(), queryGraph,
+                throwGapException);
+        System.out.println("LENGTH: " + seq.size() + " " + timeSteps.size());
 
         logger.debug("=============== Viterbi results =============== ");
         i = 1;
@@ -359,13 +381,21 @@ public class MapMatching {
         }
         return timeSteps;
     }
-
     /**
      * Computes the most likely candidate sequence for the GPX entries.
      */
     private List<SequenceState<GPXExtension, GPXEntry, Path>> computeViterbiSequence(
             List<TimeStep<GPXExtension, GPXEntry, Path>> timeSteps, int originalGpxEntriesCount,
             QueryGraph queryGraph) {
+            return computeViterbiSequence(timeSteps, originalGpxEntriesCount, queryGraph, true);
+    }
+
+    /**
+     * Computes the most likely candidate sequence for the GPX entries.
+     */
+    private List<SequenceState<GPXExtension, GPXEntry, Path>> computeViterbiSequence(
+            List<TimeStep<GPXExtension, GPXEntry, Path>> timeSteps, int originalGpxEntriesCount,
+            QueryGraph queryGraph, boolean throwException) {
         final HmmProbabilities probabilities
                 = new HmmProbabilities(measurementErrorSigma, transitionProbabilityBeta);
         final ViterbiAlgorithm<GPXExtension, GPXEntry, Path> viterbi = new ViterbiAlgorithm<>();
@@ -375,6 +405,12 @@ public class MapMatching {
         TimeStep<GPXExtension, GPXEntry, Path> prevTimeStep = null;
         int i = 1;
         for (TimeStep<GPXExtension, GPXEntry, Path> timeStep : timeSteps) {
+            // skip already processed track segments
+            if (timeStepCounter <= matchedUpTo) {
+                timeStepCounter++;
+                continue;
+            }
+
             logger.debug("\nPaths to time step {}", i++);
             computeEmissionProbabilities(timeStep, probabilities);
 
@@ -400,13 +436,18 @@ public class MapMatching {
                     }
                 }
 
-                throw new IllegalArgumentException("Sequence is broken for submitted track at time step "
-                        + timeStepCounter + " (" + originalGpxEntriesCount + " points). "
-                        + likelyReasonStr + "observation:" + timeStep.observation + ", "
-                        + timeStep.candidates.size() + " candidates: "
-                        + getSnappedCandidates(timeStep.candidates)
-                        + ". If a match is expected consider increasing max_visited_nodes.");
+                if (throwException) {
+                    throw new IllegalArgumentException("Sequence is broken for submitted track at time step "
+                            + timeStepCounter + " (" + originalGpxEntriesCount + " points). "
+                            + likelyReasonStr + "observation:" + timeStep.observation + ", "
+                            + timeStep.candidates.size() + " candidates: "
+                            + getSnappedCandidates(timeStep.candidates)
+                            + ". If a match is expected consider increasing max_visited_nodes.");
+                } else {
+                    return viterbi.computeMostLikelySequence();
+                }
             }
+            matchedUpTo = timeStepCounter;
 
             timeStepCounter++;
             prevTimeStep = timeStep;
