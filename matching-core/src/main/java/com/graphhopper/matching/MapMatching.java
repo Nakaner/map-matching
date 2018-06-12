@@ -227,7 +227,6 @@ public class MapMatching {
         // Compute the most likely sequence of map matching candidates:
         List<SequenceState<GPXExtension, GPXEntry, Path>> seq = computeViterbiSequence(timeSteps, gpxList.size(), queryGraph,
                 throwGapException);
-        System.out.println("LENGTH: " + seq.size() + " " + timeSteps.size());
 
         logger.debug("=============== Viterbi results =============== ");
         i = 1;
