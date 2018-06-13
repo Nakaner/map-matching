@@ -76,6 +76,10 @@ public class MapMatching {
     private final boolean ch;
     private int matchedUpTo = -1;
 
+    // number of points after removing duplicates and points from the input having a
+    // distance shorter than the measurement accuracy
+    private int pointCount = -1;
+
     public MapMatching(GraphHopper graphHopper, AlgorithmOptions algoOptions) {
         // Convert heading penalty [s] into U-turn penalty [m]
         final double PENALTY_CONVERSION_VELOCITY = 5;  // [m/s]
@@ -133,6 +137,14 @@ public class MapMatching {
 
     public int getSucessfullyMatchedPoints() {
         return matchedUpTo;
+    }
+
+    public int getPointCount() {
+        return pointCount;
+    }
+
+    public boolean hasPointsToBeMatched() {
+        return matchedUpTo < getPointCount() - 1;
     }
 
     public void setDistanceCalc(DistanceCalc distanceCalc) {
@@ -224,6 +236,7 @@ public class MapMatching {
             }
         }
 
+        pointCount = timeSteps.size();
         // Compute the most likely sequence of map matching candidates:
         List<SequenceState<GPXExtension, GPXEntry, Path>> seq = computeViterbiSequence(timeSteps, gpxList.size(), queryGraph,
                 throwGapException);
