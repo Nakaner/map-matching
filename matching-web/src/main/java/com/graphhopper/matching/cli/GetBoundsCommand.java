@@ -1,6 +1,8 @@
 package com.graphhopper.matching.cli;
 
-import com.graphhopper.matching.GPXFile;
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
+import com.graphhopper.matching.gpx.Gpx;
+import com.graphhopper.matching.gpx.Trk;
 import com.graphhopper.util.GPXEntry;
 import com.graphhopper.util.shapes.BBox;
 import io.dropwizard.cli.Command;
@@ -9,6 +11,7 @@ import net.sourceforge.argparse4j.inf.Namespace;
 import net.sourceforge.argparse4j.inf.Subparser;
 
 import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 public class GetBoundsCommand extends Command {
@@ -28,11 +31,19 @@ public class GetBoundsCommand extends Command {
 
     @Override
     public void run(Bootstrap bootstrap, Namespace args) {
+        XmlMapper xmlMapper = new XmlMapper();
         BBox bbox = BBox.createInverse(false);
         for (File gpxFile : args.<File>getList("gpx")) {
-            List<GPXEntry> inputGPXEntries = new GPXFile().doImport(gpxFile.getAbsolutePath()).getEntries();
-            for (GPXEntry entry : inputGPXEntries) {
-                bbox.update(entry.getLat(), entry.getLon());
+            try {
+                Gpx gpx = xmlMapper.readValue(gpxFile, Gpx.class);
+                for (Trk trk : gpx.trk) {
+                    List<GPXEntry> inputGPXEntries = trk.getEntries();
+                    for (GPXEntry entry : inputGPXEntries) {
+                        bbox.update(entry.getLat(), entry.getLon());
+                    }
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
             }
         }
 

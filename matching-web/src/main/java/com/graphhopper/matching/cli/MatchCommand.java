@@ -1,8 +1,9 @@
 package com.graphhopper.matching.cli;
 
+import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.PathWrapper;
-import com.graphhopper.matching.GPXFile;
+import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.matching.MapMatching;
 import com.graphhopper.matching.MatchResult;
 import com.graphhopper.reader.osm.GraphHopperOSM;
@@ -16,7 +17,9 @@ import io.dropwizard.setup.Bootstrap;
 import net.sourceforge.argparse4j.inf.Namespace;
 import net.sourceforge.argparse4j.inf.Subparser;
 
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileWriter;
 import java.util.Collections;
 import java.util.List;
 
@@ -77,34 +80,42 @@ public class MatchCommand extends Command {
         StopWatch importSW = new StopWatch();
         StopWatch matchSW = new StopWatch();
 
-        Translation tr = new TranslationMap().doImport().get(args.getString("instructions"));
+        Translation tr = new TranslationMap().doImport().getWithFallBack(Helper.getLocale(args.getString("instructions")));
+        final boolean withRoute = !args.getString("instructions").isEmpty();
+        XmlMapper xmlMapper = new XmlMapper();
 
         for (File gpxFile : args.<File>getList("gpx")) {
             try {
                 importSW.start();
-                List<GPXEntry> inputGPXEntries = new GPXFile().doImport(gpxFile.getAbsolutePath()).getEntries();
+                Gpx gpx = xmlMapper.readValue(gpxFile, Gpx.class);
+                if (gpx.trk == null) {
+                    throw new IllegalArgumentException("No tracks found in GPX document. Are you using waypoints or routes instead?");
+                }
+                if (gpx.trk.size() > 1) {
+                    throw new IllegalArgumentException("GPX documents with multiple tracks not supported yet.");
+                }
+                List<GPXEntry> measurements = gpx.trk.get(0).getEntries();
                 importSW.stop();
                 matchSW.start();
-                MatchResult mr = mapMatching.doWork(inputGPXEntries);
+                MatchResult mr = mapMatching.doWork(measurements);
                 matchSW.stop();
                 System.out.println(gpxFile);
-                System.out.println("\tmatches:\t" + mr.getEdgeMatches().size() + ", gps entries:" + inputGPXEntries.size());
+                System.out.println("\tmatches:\t" + mr.getEdgeMatches().size() + ", gps entries:" + measurements.size());
                 System.out.println("\tgpx length:\t" + (float) mr.getGpxEntriesLength() + " vs " + (float) mr.getMatchLength());
                 System.out.println("\tgpx time:\t" + mr.getGpxEntriesMillis() / 1000f + " vs " + mr.getMatchMillis() / 1000f);
 
                 String outFile = gpxFile.getAbsolutePath() + ".res.gpx";
                 System.out.println("\texport results to:" + outFile);
 
-                InstructionList il;
-                if (args.getString("instructions").isEmpty()) {
-                    il = new InstructionList(null);
-                } else {
-                    PathWrapper matchGHRsp = new PathWrapper();
-                    new PathMerger().doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()), tr);
-                    il = matchGHRsp.getInstructions();
+                PathWrapper pathWrapper = new PathWrapper();
+                new PathMerger().doWork(pathWrapper, Collections.singletonList(mr.getMergedPath()), tr);
+                try (BufferedWriter writer = new BufferedWriter(new FileWriter(outFile))) {
+                    long time = System.currentTimeMillis();
+                    if (!measurements.isEmpty()) {
+                        time = measurements.get(0).getTime();
+                    }
+                    writer.append(pathWrapper.getInstructions().createGPX(gpx.trk.get(0).name != null ? gpx.trk.get(0).name : "", time, hopper.hasElevation(), withRoute, true, false, Constants.VERSION));
                 }
-
-                new GPXFile(mr, il).doExport(outFile);
             } catch (Exception ex) {
                 importSW.stop();
                 matchSW.stop();

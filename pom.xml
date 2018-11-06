@@ -17,9 +17,11 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <slf4j.version>1.7.21</slf4j.version>
+        <slf4j.version>1.7.25</slf4j.version>
         <log4j.version>1.2.17</log4j.version>
-        <gh.version>0.11.0-pre1</gh.version>
+        <gh.version>0.11.0</gh.version>
+        <jackson.version>2.9.6</jackson.version>
+        <dropwizard.version>1.3.5</dropwizard.version>
 	
         <org-netbeans-modules-editor-indent.CodeStyle.project.indent-shift-width>4</org-netbeans-modules-editor-indent.CodeStyle.project.indent-shift-width>
         <org-netbeans-modules-editor-indent.CodeStyle.project.spaces-per-tab>4</org-netbeans-modules-editor-indent.CodeStyle.project.spaces-per-tab>
@@ -104,11 +106,11 @@
             </plugin>
         </plugins>
         <extensions>
-            <extension>
-                <groupId>io.packagecloud.maven.wagon</groupId>
-                <artifactId>maven-packagecloud-wagon</artifactId>
-                <version>0.0.4</version>
-            </extension>
+           <extension>
+              <groupId>io.packagecloud.maven.wagon</groupId>
+              <artifactId>maven-packagecloud-wagon</artifactId>
+              <version>0.0.6</version>
+           </extension>
         </extensions>
     </build>    
 
@@ -141,6 +143,13 @@
             </activation>
             <build>
                 <plugins>
+                    <plugin>
+		      <groupId>io.packagecloud.maven.wagon</groupId>
+                      <artifactId>maven-packagecloud-wagon</artifactId>
+                      <configuration>
+		        <skip>true</skip>
+		      </configuration>
+                    </plugin>
                     <plugin>
                         <groupId>org.apache.maven.plugins</groupId>
                         <artifactId>maven-gpg-plugin</artifactId>

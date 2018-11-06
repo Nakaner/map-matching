@@ -29,7 +29,6 @@ import org.junit.Test;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.core.Response;
 import java.io.File;
-import java.io.InputStream;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -61,8 +60,10 @@ public class MapMatchingResourceTest {
 
     @Test
     public void testGPX() {
-        InputStream xml = getClass().getResourceAsStream("tour2-with-loop.gpx");
-        final Response response = app.client().target("http://localhost:8080/match").request().buildPost(Entity.xml(xml)).invoke();
+        final Response response = app.client().target("http://localhost:8080/match")
+                .request()
+                .buildPost(Entity.xml(getClass().getResourceAsStream("tour2-with-loop.gpx")))
+                .invoke();
         assertEquals(200, response.getStatus());
         JsonNode json = response.readEntity(JsonNode.class);
         JsonNode path = json.get("paths").get(0);
@@ -76,13 +77,24 @@ public class MapMatchingResourceTest {
     }
 
     @Test
+    public void testGPX10() {
+        final Response response = app.client().target("http://localhost:8080/match")
+                .request()
+                .buildPost(Entity.xml(getClass().getResourceAsStream("gpxv1_0.gpx")))
+                .invoke();
+        assertEquals(200, response.getStatus());
+    }
+
+    @Test
     public void testEmptyGPX() {
-        String emptyGPX = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\" ?><gpx xmlns=\"http://www.topografix.com/GPX/1/1\" xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" creator=\"Graphhopper\" version=\"1.1\" xmlns:gh=\"https://graphhopper.com/public/schema/gpx/1.1\"></gpx>";
-        final Response response = app.client().target("http://localhost:8080/match").request().buildPost(Entity.xml(emptyGPX)).invoke();
-        assertEquals(500, response.getStatus());
+        final Response response = app.client().target("http://localhost:8080/match")
+                .request()
+                .buildPost(Entity.xml(getClass().getResourceAsStream("test-only-wpt.gpx")))
+                .invoke();
+        assertEquals(400, response.getStatus());
         JsonNode json = response.readEntity(JsonNode.class);
         JsonNode message = json.get("message");
         assertTrue(message.isValueNode());
-        assertTrue(message.asText().startsWith("There was an error processing your request."));
+        assertTrue(message.asText().startsWith("No tracks found"));
     }
 }

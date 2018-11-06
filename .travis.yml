@@ -11,6 +11,11 @@ notifications:
 # enable container-based stack
 sudo: false
 
+# see GH core
+before_install:
+  - if [ ! -z "$GPG_SECRET_KEYS" ]; then echo $GPG_SECRET_KEYS | base64 --decode | $GPG_EXECUTABLE --import; fi
+  - if [ ! -z "$GPG_OWNERTRUST" ]; then echo $GPG_OWNERTRUST | base64 --decode | $GPG_EXECUTABLE --import-ownertrust; fi
+
 install: true
 
 script:
@@ -18,12 +23,17 @@ script:
 
 after_success:
   # deploy snapshot artifacts to sonatype
-  - if [ "$TRAVIS_JDK_VERSION" == "openjdk8" ] && [ "$TRAVIS_BRANCH" == "master" ] && [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
+  - if [ "$TRAVIS_JDK_VERSION" == "openjdk8" ] && [ "$TRAVIS_TAG" != "" ]; then
+        echo "release to maven central";
+        mvn versions:set -DnewVersion=$TRAVIS_TAG -DgenerateBackupPoms=false;
+        mvn deploy -P release --settings mvn-settings.xml -DskipTests=true -B;
+    elif [ "$TRAVIS_JDK_VERSION" == "openjdk8" ] && [ "$TRAVIS_PULL_REQUEST" == "false" ]; then
         mvn deploy --settings mvn-settings.xml -DskipTests=true -B;
     else
         echo "Not deploying artifacts for $TRAVIS_BRANCH";
     fi
 
+# TODO can we remove deploying to packagecloud?
 deploy:
   provider: script
   script: "mvn versions:set -DnewVersion=$TRAVIS_TAG -DgenerateBackupPoms=false && mvn --settings .travis.settings.xml -DskipTests=true -B clean deploy"
