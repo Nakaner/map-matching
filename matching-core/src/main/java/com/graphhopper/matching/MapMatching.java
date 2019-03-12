@@ -418,7 +418,7 @@ public class MapMatching {
         int i = 1;
         for (TimeStep<GPXExtension, GPXEntry, Path> timeStep : timeSteps) {
             // skip already processed track segments
-            if (timeStepCounter <= matchedUpTo) {
+            if (timeStepCounter < matchedUpTo) {
                 timeStepCounter++;
                 continue;
             }
@@ -456,15 +456,19 @@ public class MapMatching {
                             + getSnappedCandidates(timeStep.candidates)
                             + ". If a match is expected consider increasing max_visited_nodes.");
                 } else {
+                    // Set matchedUpTo to current timeStepCounter because calling the map matching
+                    // a second time should start with that step (and not run an unlimited number
+                    // of unsuccessful attempts.
+                    matchedUpTo = timeStepCounter;
                     return viterbi.computeMostLikelySequence();
                 }
             }
-            matchedUpTo = timeStepCounter;
 
             timeStepCounter++;
             prevTimeStep = timeStep;
         }
 
+        matchedUpTo = timeStepCounter - 1;
         return viterbi.computeMostLikelySequence();
     }
 
