@@ -7,7 +7,7 @@
       <password>${env.CI_DEPLOY_PASSWORD}</password>
     </server>
   </servers>
-   <profiles>
+  <profiles>
       <profile>
         <id>ossrh</id>
         <activation>

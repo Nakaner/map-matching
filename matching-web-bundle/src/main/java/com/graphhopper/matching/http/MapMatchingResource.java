@@ -24,15 +24,14 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.PathWrapper;
-import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.http.WebHelper;
-import com.graphhopper.matching.EdgeMatch;
-import com.graphhopper.matching.GPXExtension;
-import com.graphhopper.matching.MapMatching;
-import com.graphhopper.matching.MatchResult;
+import com.graphhopper.matching.*;
+import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.routing.AlgorithmOptions;
 import com.graphhopper.routing.util.HintsMap;
+import com.graphhopper.routing.util.TraversalMode;
 import com.graphhopper.util.*;
+import com.graphhopper.util.gpx.GpxFromInstructions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,6 +43,7 @@ import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 import java.util.*;
 
+import static com.graphhopper.util.Parameters.Details.PATH_DETAILS;
 import static com.graphhopper.util.Parameters.Routing.*;
 
 /**
@@ -79,7 +79,7 @@ public class MapMatchingResource {
             @QueryParam("points_encoded") @DefaultValue("true") boolean pointsEncoded,
             @QueryParam("vehicle") @DefaultValue("car") String vehicleStr,
             @QueryParam("locale") @DefaultValue("en") String localeStr,
-            @QueryParam(Parameters.DETAILS.PATH_DETAILS) List<String> pathDetails,
+            @QueryParam(PATH_DETAILS) List<String> pathDetails,
             @QueryParam("gpx.route") @DefaultValue("true") boolean withRoute,
             @QueryParam("gpx.track") @DefaultValue("true") boolean withTrack,
             @QueryParam("traversal_keys") @DefaultValue("false") boolean enableTraversalKeys,
@@ -99,14 +99,14 @@ public class MapMatchingResource {
         StopWatch sw = new StopWatch().start();
 
         AlgorithmOptions opts = AlgorithmOptions.start()
-                .traversalMode(graphHopper.getTraversalMode())
+                .traversalMode(graphHopper.getEncodingManager().needsTurnCostsSupport() ? TraversalMode.EDGE_BASED : TraversalMode.NODE_BASED)
                 .maxVisitedNodes(maxVisitedNodes)
                 .hints(new HintsMap().put("vehicle", vehicleStr))
                 .build();
         MapMatching matching = new MapMatching(graphHopper, opts);
         matching.setMeasurementErrorSigma(gpsAccuracy);
 
-        List<GPXEntry> measurements = gpx.trk.get(0).getEntries();
+        List<Observation> measurements = gpx.trk.get(0).getEntries();
         MatchResult matchResult = matching.doWork(measurements);
 
         // TODO: Request logging and timing should perhaps be done somewhere outside
@@ -128,7 +128,7 @@ public class MapMatchingResource {
                     setDouglasPeucker(peucker).
                     setSimplifyResponse(minPathPrecision > 0);
             PathWrapper pathWrapper = new PathWrapper();
-            pathMerger.doWork(pathWrapper, Collections.singletonList(matchResult.getMergedPath()), tr);
+            pathMerger.doWork(pathWrapper, Collections.singletonList(matchResult.getMergedPath()), graphHopper.getEncodingManager(), tr);
 
             // GraphHopper thinks an empty path is an invalid path, and further that an invalid path is still a path but
             // marked with a non-empty list of Exception objects. I disagree, so I clear it.
@@ -137,11 +137,10 @@ public class MapMatchingResource {
             rsp.add(pathWrapper);
 
             if (writeGPX) {
-                long time = System.currentTimeMillis();
-                if (!measurements.isEmpty()) {
-                    time = measurements.get(0).getTime();
-                }
-                return Response.ok(rsp.getBest().getInstructions().createGPX(gpx.trk.get(0).name != null ? gpx.trk.get(0).name : "", time, enableElevation, withRoute, withTrack, false, Constants.VERSION), "application/gpx+xml").
+                long time = gpx.trk.get(0).getStartTime()
+                        .map(Date::getTime)
+                        .orElse(System.currentTimeMillis());
+                return Response.ok(GpxFromInstructions.createGPX(rsp.getBest().getInstructions(), gpx.trk.get(0).name != null ? gpx.trk.get(0).name : "", time, enableElevation, withRoute, withTrack, false, Constants.VERSION, tr), "application/gpx+xml").
                         header("X-GH-Took", "" + Math.round(took * 1000)).
                         build();
             } else {
@@ -151,7 +150,6 @@ public class MapMatchingResource {
                 matchStatistics.put("distance", matchResult.getMatchLength());
                 matchStatistics.put("time", matchResult.getMatchMillis());
                 matchStatistics.put("original_distance", matchResult.getGpxEntriesLength());
-                matchStatistics.put("original_time", matchResult.getGpxEntriesMillis());
                 map.putPOJO("map_matching", matchStatistics);
 
                 if (enableTraversalKeys) {
@@ -190,11 +188,10 @@ public class MapMatchingResource {
             }
             link.put("id", edgeMatch.getEdgeState().getEdge());
             ArrayNode wpts = link.putArray("wpts");
-            for (GPXExtension extension : edgeMatch.getGpxExtensions()) {
+            for (State extension : edgeMatch.getStates()) {
                 ObjectNode wpt = wpts.addObject();
                 wpt.put("x", extension.getQueryResult().getSnappedPoint().lon);
                 wpt.put("y", extension.getQueryResult().getSnappedPoint().lat);
-                wpt.put("timestamp", extension.getEntry().getTime());
             }
         }
         return root;

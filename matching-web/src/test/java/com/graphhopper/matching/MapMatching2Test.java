@@ -46,7 +46,7 @@ public class MapMatching2Test {
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/map-issue13.osm.gz");
         hopper.setGraphHopperLocation("../target/mapmatchingtest-13");
-        hopper.setEncodingManager(new EncodingManager(encoder));
+        hopper.setEncodingManager(EncodingManager.create(encoder));
         hopper.getCHFactoryDecorator().setDisablingAllowed(true);
         hopper.importOrLoad();
 
@@ -77,7 +77,7 @@ public class MapMatching2Test {
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/issue-70.osm.gz");
         hopper.setGraphHopperLocation("../target/mapmatchingtest-70");
-        hopper.setEncodingManager(new EncodingManager(encoder));
+        hopper.setEncodingManager(EncodingManager.create(encoder));
         hopper.getCHFactoryDecorator().setDisablingAllowed(true);
         hopper.importOrLoad();
 
@@ -103,7 +103,7 @@ public class MapMatching2Test {
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/map-issue13.osm.gz");
         hopper.setGraphHopperLocation("../target/mapmatchingtest-127");
-        hopper.setEncodingManager(new EncodingManager(encoder));
+        hopper.setEncodingManager(EncodingManager.create(encoder));
         hopper.getCHFactoryDecorator().setDisablingAllowed(true);
         hopper.importOrLoad();
 
@@ -126,14 +126,14 @@ public class MapMatching2Test {
     }
 
     private void validateEdgeMatch(EdgeMatch edgeMatch) {
-        for (GPXExtension gpxExtension : edgeMatch.getGpxExtensions()) {
-            if (gpxExtension.getQueryResult().getSnappedPosition() == QueryResult.Position.TOWER) {
-                if (gpxExtension.getQueryResult().getClosestNode() != edgeMatch.getEdgeState().getAdjNode()
-                        && gpxExtension.getQueryResult().getClosestNode() != edgeMatch.getEdgeState().getAdjNode()) {
+        for (State state : edgeMatch.getStates()) {
+            if (state.getQueryResult().getSnappedPosition() == QueryResult.Position.TOWER) {
+                if (state.getQueryResult().getClosestNode() != edgeMatch.getEdgeState().getAdjNode()
+                        && state.getQueryResult().getClosestNode() != edgeMatch.getEdgeState().getAdjNode()) {
                     fail();
                 }
             } else {
-                if (gpxExtension.getQueryResult().getClosestEdge().getEdge() != edgeMatch.getEdgeState().getEdge()) {
+                if (state.getQueryResult().getClosestEdge().getEdge() != edgeMatch.getEdgeState().getEdge()) {
                     fail();
                 }
             }

@@ -15,4 +15,4 @@ matching-core/build.xml
 /map-data/**/*
 bin/
 /matching-core/nbproject/
-dependency-reduced-pom.xml
+matching-web/dependency-reduced-pom.xml
