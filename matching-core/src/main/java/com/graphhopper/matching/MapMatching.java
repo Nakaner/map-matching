@@ -25,8 +25,9 @@ import com.graphhopper.matching.util.TimeStep;
 import com.graphhopper.routing.*;
 import com.graphhopper.routing.ch.PreparationWeighting;
 import com.graphhopper.routing.ch.PrepareContractionHierarchies;
+import com.graphhopper.routing.querygraph.QueryGraph;
+import com.graphhopper.routing.querygraph.VirtualEdgeIteratorState;
 import com.graphhopper.routing.util.*;
-import com.graphhopper.routing.weighting.FastestWeighting;
 import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.storage.CHGraph;
 import com.graphhopper.storage.Graph;
@@ -37,7 +38,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.Map.Entry;
 
 /**
  * This class matches real world GPX entries to the digital road network stored
@@ -60,6 +60,7 @@ import java.util.Map.Entry;
 public class MapMatching {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final GraphHopper graphHopper;
 
     // Penalty in m for each U-turn performed at the beginning or end of a path between two
     // subsequent candidates.
@@ -70,7 +71,6 @@ public class MapMatching {
     private double measurementErrorSigma = 50.0;
     private double transitionProbabilityBeta = 2.0;
     private final int maxVisitedNodes;
-    private final int nodeCount;
     private DistanceCalc distanceCalc = new DistancePlaneProjection();
     private final Weighting weighting;
     private final boolean ch;
@@ -79,55 +79,35 @@ public class MapMatching {
     // number of points after removing duplicates and points from the input having a
     // distance shorter than the measurement accuracy
     private int pointCount = -1;
+    private QueryGraph queryGraph;
 
-    public MapMatching(GraphHopper graphHopper, AlgorithmOptions algoOptions) {
-        // Convert heading penalty [s] into U-turn penalty [m]
-        final double PENALTY_CONVERSION_VELOCITY = 5;  // [m/s]
-        final double headingTimePenalty = algoOptions.getHints().getDouble(
-                Parameters.Routing.HEADING_PENALTY, Parameters.Routing.DEFAULT_HEADING_PENALTY);
-        uTurnDistancePenalty = headingTimePenalty * PENALTY_CONVERSION_VELOCITY;
-
+    public MapMatching(GraphHopper graphHopper, HintsMap hints) {
+        this.graphHopper = graphHopper;
         this.locationIndex = (LocationIndexTree) graphHopper.getLocationIndex();
 
-        // create hints from algoOptions, so we can create the algorithm factory        
-        HintsMap hints = new HintsMap();
-        for (Entry<String, String> entry : algoOptions.getHints().toMap().entrySet()) {
-            hints.put(entry.getKey(), entry.getValue());
-        }
+        if (!hints.has("vehicle")) hints.put("vehicle", "car");
 
-        // default is non-CH
-        if (!hints.has(Parameters.CH.DISABLE)) {
-            hints.put(Parameters.CH.DISABLE, true);
+        // Convert heading penalty [s] into U-turn penalty [m]
+        // The heading penalty is automatically taken into account by GraphHopper routing,
+        // for all links that we set to "unfavored" on the QueryGraph.
+        // We use that mechanism to softly enforce a heading for each map-matching state.
+        // We want to consistently use the same parameter for our own objective function (independent of the routing),
+        // which has meters as unit, not seconds.
 
-            if (!graphHopper.getCHFactoryDecorator().isDisablingAllowed())
-                throw new IllegalArgumentException("Cannot disable CH. Not allowed on server side");
-        }
+        final double PENALTY_CONVERSION_VELOCITY = 5;  // [m/s]
+        final double headingTimePenalty = hints.getDouble(Parameters.Routing.HEADING_PENALTY, Parameters.Routing.DEFAULT_HEADING_PENALTY);
+        uTurnDistancePenalty = headingTimePenalty * PENALTY_CONVERSION_VELOCITY;
 
-        // TODO ugly workaround, duplicate data: hints can have 'vehicle' but algoOptions.weighting too!?
-        // Similar problem in GraphHopper class
-        String vehicle = hints.getVehicle();
-        if (vehicle.isEmpty()) {
-            if (algoOptions.hasWeighting()) {
-                vehicle = algoOptions.getWeighting().getFlagEncoder().toString();
-            } else {
-                vehicle = graphHopper.getEncodingManager().fetchEdgeEncoders().get(0).toString();
-            }
-            hints.setVehicle(vehicle);
-        }
-        weighting = new FastestWeighting(graphHopper.getEncodingManager().getEncoder(vehicle), algoOptions.getHints());
         RoutingAlgorithmFactory routingAlgorithmFactory = graphHopper.getAlgorithmFactory(hints);
         if (routingAlgorithmFactory instanceof PrepareContractionHierarchies) {
             ch = true;
-            // I want to use my own instance of FastestWeighting because it uses its own heading penalty,
-            // but here it is ok to use the CH preparation that was prepared for a different FastestWeighting (without
-            // the heading penalty), because we are only using it for map-matching (but not CH routing)
             routingGraph = graphHopper.getGraphHopperStorage().getCHGraph(((PrepareContractionHierarchies) routingAlgorithmFactory).getCHProfile());
         } else {
             ch = false;
             routingGraph = graphHopper.getGraphHopperStorage();
         }
-        this.nodeCount = routingGraph.getNodes();
-        this.maxVisitedNodes = algoOptions.getMaxVisitedNodes();
+        weighting = graphHopper.createWeighting(hints, graphHopper.getEncodingManager().getEncoder(hints.getVehicle()), null);
+        this.maxVisitedNodes = hints.getInt(Parameters.Routing.MAX_VISITED_NODES, Integer.MAX_VALUE);
     }
 
     public boolean matchingAttempted() {
@@ -193,12 +173,11 @@ public class MapMatching {
 
         // Add virtual nodes and edges to the graph so that candidates on edges can be represented
         // by virtual nodes.
-        QueryGraph queryGraph = new QueryGraph(routingGraph).setUseEdgeExplorerCache(true);
         List<QueryResult> allQueryResults = new ArrayList<>();
         for (Collection<QueryResult> qrs : queriesPerEntry) {
             allQueryResults.addAll(qrs);
         }
-        queryGraph.lookup(allQueryResults);
+        queryGraph = QueryGraph.lookup(routingGraph, allQueryResults);
 
         // Different QueryResults can have the same tower node as their closest node.
         // Hence, we now dedupe the query results of each GPX entry by their closest node (#91).
@@ -216,7 +195,7 @@ public class MapMatching {
             for (QueryResult qr : entries) {
                 logger.debug("Node id: {}, virtual: {}, snapped on: {}, pos: {},{}, "
                                 + "query distance: {}", qr.getClosestNode(),
-                        isVirtualNode(qr.getClosestNode()), qr.getSnappedPosition(),
+                        queryGraph.isVirtualNode(qr.getClosestNode()), qr.getSnappedPosition(),
                         qr.getSnappedPoint().getLat(), qr.getSnappedPoint().getLon(),
                         qr.getQueryDistance());
             }
@@ -247,8 +226,7 @@ public class MapMatching {
             i++;
         }
 
-        final EdgeExplorer explorer = queryGraph.createEdgeExplorer(DefaultEdgeFilter.allEdges(weighting.getFlagEncoder()));
-        final Map<String, EdgeIteratorState> virtualEdgesMap = createVirtualEdgesMap(queriesPerEntry, explorer);
+        final Map<String, EdgeIteratorState> virtualEdgesMap = createVirtualEdgesMap(queriesPerEntry);
         MatchResult matchResult = computeMatchResult(seq, virtualEdgesMap, gpxList, queryGraph);
         logger.debug("=============== Matched real edges =============== ");
         i = 1;
@@ -257,6 +235,10 @@ public class MapMatching {
             i++;
         }
         return matchResult;
+    }
+
+    private EdgeExplorer createAllEdgeExplorer() {
+        return queryGraph.createEdgeExplorer(DefaultEdgeFilter.allEdges(weighting.getFlagEncoder()));
     }
 
     /**
@@ -592,6 +574,8 @@ public class MapMatching {
         matchResult.setMatchMillis(time);
         matchResult.setMatchLength(distance);
         matchResult.setGPXEntriesLength(gpxLength(gpxList));
+        matchResult.setGraph(queryGraph.getBaseGraph());
+        matchResult.setWeighting(weighting);
         return matchResult;
     }
 
@@ -675,31 +659,27 @@ public class MapMatching {
 
     private EdgeIteratorState resolveToRealEdge(Map<String, EdgeIteratorState> virtualEdgesMap,
                                                 EdgeIteratorState edgeIteratorState) {
-        if (isVirtualNode(edgeIteratorState.getBaseNode())
-                || isVirtualNode(edgeIteratorState.getAdjNode())) {
+        if (queryGraph.isVirtualNode(edgeIteratorState.getBaseNode())
+                || queryGraph.isVirtualNode(edgeIteratorState.getAdjNode())) {
             return virtualEdgesMap.get(virtualEdgesMapKey(edgeIteratorState));
         } else {
             return edgeIteratorState;
         }
     }
 
-    private boolean isVirtualNode(int node) {
-        return node >= nodeCount;
-    }
-
     /**
      * Returns a map where every virtual edge maps to its real edge with correct orientation.
      */
-    private Map<String, EdgeIteratorState> createVirtualEdgesMap(
-            List<Collection<QueryResult>> queriesPerEntry, EdgeExplorer explorer) {
+    private Map<String, EdgeIteratorState> createVirtualEdgesMap(List<Collection<QueryResult>> queriesPerEntry) {
+        EdgeExplorer explorer = createAllEdgeExplorer();
         // TODO For map key, use the traversal key instead of string!
         Map<String, EdgeIteratorState> virtualEdgesMap = new HashMap<>();
         for (Collection<QueryResult> queryResults : queriesPerEntry) {
             for (QueryResult qr : queryResults) {
-                if (isVirtualNode(qr.getClosestNode())) {
+                if (queryGraph.isVirtualNode(qr.getClosestNode())) {
                     EdgeIterator iter = explorer.setBaseNode(qr.getClosestNode());
                     while (iter.next()) {
-                        int node = traverseToClosestRealAdj(explorer, iter);
+                        int node = traverseToClosestRealAdj(iter);
                         if (node == qr.getClosestEdge().getAdjNode()) {
                             virtualEdgesMap.put(virtualEdgesMapKey(iter),
                                     qr.getClosestEdge().detach(false));
@@ -728,15 +708,15 @@ public class MapMatching {
         return iter.getAdjNode() + "-" + iter.getEdge() + "-" + iter.getBaseNode();
     }
 
-    private int traverseToClosestRealAdj(EdgeExplorer explorer, EdgeIteratorState edge) {
-        if (!isVirtualNode(edge.getAdjNode())) {
+    private int traverseToClosestRealAdj(EdgeIteratorState edge) {
+        if (!queryGraph.isVirtualNode(edge.getAdjNode())) {
             return edge.getAdjNode();
         }
-
+        EdgeExplorer explorer = createAllEdgeExplorer();
         EdgeIterator iter = explorer.setBaseNode(edge.getAdjNode());
         while (iter.next()) {
             if (iter.getAdjNode() != edge.getBaseNode()) {
-                return traverseToClosestRealAdj(explorer, iter);
+                return traverseToClosestRealAdj(iter);
             }
         }
         throw new IllegalStateException("Cannot find adjacent edge " + edge);
@@ -756,10 +736,12 @@ public class MapMatching {
 
     private static class MapMatchedPath extends Path {
         MapMatchedPath(Graph graph, Weighting weighting, List<EdgeIteratorState> edges) {
-            super(graph, weighting);
+            super(graph);
             int prevEdge = EdgeIterator.NO_EDGE;
             for (EdgeIteratorState edge : edges) {
-                processEdge(edge.getEdge(), edge.getAdjNode(), prevEdge);
+                addDistance(edge.getDistance());
+                addTime(weighting.calcMillis(edge, false, prevEdge));
+                addEdge(edge.getEdge());
                 prevEdge = edge.getEdge();
             }
             if (edges.isEmpty()) {
