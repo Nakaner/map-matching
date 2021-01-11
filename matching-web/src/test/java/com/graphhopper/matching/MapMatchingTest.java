@@ -20,23 +20,23 @@ package com.graphhopper.matching;
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.graphhopper.GHRequest;
 import com.graphhopper.GraphHopper;
-import com.graphhopper.PathWrapper;
+import com.graphhopper.ResponsePath;
+import com.graphhopper.config.CHProfile;
+import com.graphhopper.config.Profile;
 import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.reader.osm.GraphHopperOSM;
 import com.graphhopper.routing.util.CarFlagEncoder;
 import com.graphhopper.routing.util.EncodingManager;
-import com.graphhopper.routing.util.HintsMap;
-import com.graphhopper.util.InstructionList;
-import com.graphhopper.util.Parameters;
-import com.graphhopper.util.PathMerger;
-import com.graphhopper.util.TranslationMap;
+import com.graphhopper.util.*;
 import com.graphhopper.util.gpx.GpxFromInstructions;
 import com.graphhopper.util.shapes.GHPoint;
-import org.junit.Before;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -53,36 +53,45 @@ import static org.junit.Assert.*;
 @RunWith(Parameterized.class)
 public class MapMatchingTest {
 
+    private static final String GH_LOCATION = "../target/mapmatchingtest-ch";
     private final TranslationMap translationMap = new TranslationMap().doImport();
     private final XmlMapper xmlMapper = new XmlMapper();
 
     private final String parameterName;
-    private GraphHopper graphHopper;
-    private final HintsMap algoOptions;
+    private static GraphHopper graphHopper;
+    private final PMap hints;
 
 
-    @Before
-    public void setup() {
+    @BeforeClass
+    public static void setup() {
+        Helper.removeDir(new File(GH_LOCATION));
         CarFlagEncoder encoder = new CarFlagEncoder();
         graphHopper = new GraphHopperOSM();
         graphHopper.setDataReaderFile("../map-data/leipzig_germany.osm.pbf");
-        graphHopper.setGraphHopperLocation("../target/mapmatchingtest-ch");
+        graphHopper.setGraphHopperLocation(GH_LOCATION);
         graphHopper.setEncodingManager(EncodingManager.create(encoder));
-        graphHopper.getCHFactoryDecorator().setDisablingAllowed(true);
+        graphHopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
+        graphHopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
+        graphHopper.getCHPreparationHandler().setDisablingAllowed(true);
         graphHopper.importOrLoad();
+    }
+
+    @AfterClass
+    public static void after() {
+        Helper.removeDir(new File(GH_LOCATION));
     }
 
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> algoOptions() {
         return Arrays.asList(new Object[][]{
-                {"non-CH", new HintsMap().put(Parameters.CH.DISABLE, true)},
-                {"CH", new HintsMap().put(Parameters.CH.DISABLE, false)}
+                {"non-CH", new PMap().putObject(Parameters.CH.DISABLE, true)},
+                {"CH", new PMap().putObject(Parameters.CH.DISABLE, false)}
         });
     }
 
-    public MapMatchingTest(String parameterName, HintsMap algoOption) {
+    public MapMatchingTest(String parameterName, PMap hints) {
         this.parameterName = parameterName;
-        this.algoOptions = algoOption;
+        this.hints = hints.putObject("profile", "my_profile");
     }
 
     /**
@@ -90,11 +99,11 @@ public class MapMatchingTest {
      */
     @Test
     public void testDoWork() {
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
-        PathWrapper route2 = graphHopper.route(new GHRequest(
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
+        ResponsePath route2 = graphHopper.route(new GHRequest(
                 new GHPoint(51.358735, 12.360574),
                 new GHPoint(51.358594, 12.360032))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route2);
         MatchResult mr = mapMatching.doWork(inputGPXEntries);
 
@@ -110,38 +119,40 @@ public class MapMatchingTest {
                 fetchStreets(mr.getEdgeMatches()));
         assertEquals(mr.getGpxEntriesLength(), mr.getMatchLength(), 1.5);
 
-        PathWrapper matchGHRsp = new PathWrapper();
+        ResponsePath matchGHRsp = new ResponsePath();
         new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()), graphHopper.getEncodingManager(), translationMap.get("en"));
         InstructionList il = matchGHRsp.getInstructions();
 
         assertEquals(il.toString(), 2, il.size());
         assertEquals("Platnerstraße", il.get(0).getName());
 
-        PathWrapper route1 = graphHopper.route(new GHRequest(
+        ResponsePath route1 = graphHopper.route(new GHRequest(
                 new GHPoint(51.33099, 12.380267),
-                new GHPoint(51.330689, 12.380776))
-                .setWeighting("fastest")).getBest();
+                new GHPoint(51.330531, 12.380396))
+                .setProfile("my_profile")).getBest();
         inputGPXEntries = createRandomGPXEntriesAlongRoute(route1);
+        mapMatching.setMeasurementErrorSigma(5);
         mr = mapMatching.doWork(inputGPXEntries);
 
         assertEquals(Arrays.asList("Windmühlenstraße", "Windmühlenstraße", "Bayrischer Platz",
                 "Bayrischer Platz", "Bayrischer Platz"), fetchStreets(mr.getEdgeMatches()));
         assertEquals(mr.getGpxEntriesLength(), mr.getMatchLength(), .1);
 
-        matchGHRsp = new PathWrapper();
-        new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()), graphHopper.getEncodingManager(), translationMap.get("en"));
+        matchGHRsp = new ResponsePath();
+        new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()),
+                graphHopper.getEncodingManager(), translationMap.get("en"));
         il = matchGHRsp.getInstructions();
 
         assertEquals(il.toString(), 3, il.size());
         assertEquals("Windmühlenstraße", il.get(0).getName());
         assertEquals("Bayrischer Platz", il.get(1).getName());
 
-        PathWrapper route = graphHopper.route(new GHRequest(
+        ResponsePath route = graphHopper.route(new GHRequest(
                 new GHPoint(51.377781, 12.338333),
                 new GHPoint(51.323317, 12.387085))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
         inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
-        mapMatching = new MapMatching(graphHopper, algoOptions);
+        mapMatching = new MapMatching(graphHopper, hints);
         mapMatching.setMeasurementErrorSigma(20);
         mr = mapMatching.doWork(inputGPXEntries);
 
@@ -149,9 +160,6 @@ public class MapMatchingTest {
         // GraphHopper travel times aren't exactly additive
         assertThat(Math.abs(route.getTime() - mr.getMatchMillis()), is(lessThan(1000L)));
         assertEquals(142, mr.getEdgeMatches().size());
-
-        // TODO with 20m distortion
-        // TODO with 40m distortion
     }
 
     /**
@@ -166,11 +174,11 @@ public class MapMatchingTest {
     @Test
     public void testDistantPoints() {
         // OK with 1000 visited nodes:
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
-        PathWrapper route = graphHopper.route(new GHRequest(
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
+        ResponsePath route = graphHopper.route(new GHRequest(
                 new GHPoint(51.23, 12.18),
                 new GHPoint(51.45, 12.59))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
         MatchResult mr = mapMatching.doWork(inputGPXEntries);
 
@@ -179,7 +187,7 @@ public class MapMatchingTest {
         assertThat(Math.abs(route.getTime() - mr.getMatchMillis()), is(lessThan(1000L)));
 
         // not OK when we only allow a small number of visited nodes:
-        HintsMap opts = new HintsMap(algoOptions).put(Parameters.Routing.MAX_VISITED_NODES, 1);
+        PMap opts = new PMap(hints).putObject(Parameters.Routing.MAX_VISITED_NODES, 1);
         mapMatching = new MapMatching(graphHopper, opts);
         try {
             mr = mapMatching.doWork(inputGPXEntries);
@@ -195,11 +203,11 @@ public class MapMatchingTest {
      */
     @Test
     public void testClosePoints() {
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
-        PathWrapper route = graphHopper.route(new GHRequest(
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
+        ResponsePath route = graphHopper.route(new GHRequest(
                 new GHPoint(51.342422, 12.3613358),
                 new GHPoint(51.342328, 12.3613358))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
         MatchResult mr = mapMatching.doWork(inputGPXEntries);
 
@@ -218,7 +226,7 @@ public class MapMatchingTest {
     @Test
     public void testSmallSeparatedSearchDistance() throws IOException {
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour3-with-long-edge.gpx"), Gpx.class);
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
         mapMatching.setMeasurementErrorSigma(20);
         MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
         assertEquals(Arrays.asList("Weinligstraße", "Weinligstraße", "Weinligstraße",
@@ -232,7 +240,7 @@ public class MapMatchingTest {
      */
     @Test
     public void testLoop() throws IOException {
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
 
         // Need to reduce GPS accuracy because too many GPX are filtered out otherwise.
         mapMatching.setMeasurementErrorSigma(40);
@@ -253,7 +261,7 @@ public class MapMatchingTest {
      */
     @Test
     public void testLoop2() throws IOException {
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
         // TODO smaller sigma like 40m leads to U-turn at Tschaikowskistraße
         mapMatching.setMeasurementErrorSigma(50);
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour-with-loop.gpx"), Gpx.class);
@@ -272,11 +280,11 @@ public class MapMatchingTest {
      */
     @Test
     public void testUTurns() throws IOException {
-        final HintsMap algoOptions = new HintsMap(this.algoOptions)
+        final PMap hints = new PMap(this.hints)
                 // Reduce penalty to allow U-turns
-                .put(Parameters.Routing.HEADING_PENALTY, 50);
+                .putObject(Parameters.Routing.HEADING_PENALTY, 50);
 
-        MapMatching mapMatching = new MapMatching(graphHopper, algoOptions);
+        MapMatching mapMatching = new MapMatching(graphHopper, hints);
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour4-with-uturn.gpx"), Gpx.class);
 
         // with large measurement error, we expect no U-turn
@@ -323,7 +331,7 @@ public class MapMatchingTest {
      * This method _should_ be replaced by one that creates random observations along a route,
      * with random noise and random sampling.
      */
-    private List<Observation> createRandomGPXEntriesAlongRoute(PathWrapper route) {
+    private List<Observation> createRandomGPXEntriesAlongRoute(ResponsePath route) {
         return GpxFromInstructions.createGPXList(route.getInstructions()).stream()
                 .map(gpx -> new Observation(gpx.getPoint())).collect(Collectors.toList());
     }

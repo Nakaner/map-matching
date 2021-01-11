@@ -20,17 +20,19 @@ package com.graphhopper.matching;
 import com.bmw.hmm.SequenceState;
 import com.bmw.hmm.ViterbiAlgorithm;
 import com.graphhopper.GraphHopper;
+import com.graphhopper.config.Profile;
 import com.graphhopper.matching.util.HmmProbabilities;
 import com.graphhopper.matching.util.TimeStep;
 import com.graphhopper.routing.*;
-import com.graphhopper.routing.ch.PreparationWeighting;
-import com.graphhopper.routing.ch.PrepareContractionHierarchies;
+import com.graphhopper.routing.ch.CHRoutingAlgorithmFactory;
 import com.graphhopper.routing.querygraph.QueryGraph;
 import com.graphhopper.routing.querygraph.VirtualEdgeIteratorState;
-import com.graphhopper.routing.util.*;
+import com.graphhopper.routing.util.DefaultEdgeFilter;
+import com.graphhopper.routing.util.EdgeFilter;
+import com.graphhopper.routing.util.TraversalMode;
 import com.graphhopper.routing.weighting.Weighting;
-import com.graphhopper.storage.CHGraph;
 import com.graphhopper.storage.Graph;
+import com.graphhopper.storage.RoutingCHGraphImpl;
 import com.graphhopper.storage.index.LocationIndexTree;
 import com.graphhopper.storage.index.QueryResult;
 import com.graphhopper.util.*;
@@ -60,7 +62,6 @@ import java.util.*;
 public class MapMatching {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
-    private final GraphHopper graphHopper;
 
     // Penalty in m for each U-turn performed at the beginning or end of a path between two
     // subsequent candidates.
@@ -81,11 +82,30 @@ public class MapMatching {
     private int pointCount = -1;
     private QueryGraph queryGraph;
 
-    public MapMatching(GraphHopper graphHopper, HintsMap hints) {
-        this.graphHopper = graphHopper;
+    public MapMatching(GraphHopper graphHopper, PMap hints) {
         this.locationIndex = (LocationIndexTree) graphHopper.getLocationIndex();
 
-        if (!hints.has("vehicle")) hints.put("vehicle", "car");
+        if (hints.has("vehicle"))
+            throw new IllegalArgumentException("MapMatching hints may no longer contain a vehicle, use the profile parameter instead, see core/#1958");
+        if (hints.has("weighting"))
+            throw new IllegalArgumentException("MapMatching hints may no longer contain a weighting, use the profile parameter instead, see core/#1958");
+
+        if (graphHopper.getProfiles().isEmpty()) {
+            throw new IllegalArgumentException("No profiles found, you need to configure at least one profile to use map matching");
+        }
+        if (!hints.has("profile")) {
+            throw new IllegalArgumentException("You need to specify a profile to perform map matching");
+        }
+        String profileStr = hints.getString("profile", "");
+        Profile profile = graphHopper.getProfile(profileStr);
+        if (profile == null) {
+            List<Profile> profiles = graphHopper.getProfiles();
+            List<String> profileNames = new ArrayList<>(profiles.size());
+            for (Profile p : profiles) {
+                profileNames.add(p.getName());
+            }
+            throw new IllegalArgumentException("Could not find profile '" + profileStr + "', choose one of: " + profileNames);
+        }
 
         // Convert heading penalty [s] into U-turn penalty [m]
         // The heading penalty is automatically taken into account by GraphHopper routing,
@@ -98,15 +118,18 @@ public class MapMatching {
         final double headingTimePenalty = hints.getDouble(Parameters.Routing.HEADING_PENALTY, Parameters.Routing.DEFAULT_HEADING_PENALTY);
         uTurnDistancePenalty = headingTimePenalty * PENALTY_CONVERSION_VELOCITY;
 
-        RoutingAlgorithmFactory routingAlgorithmFactory = graphHopper.getAlgorithmFactory(hints);
-        if (routingAlgorithmFactory instanceof PrepareContractionHierarchies) {
+        boolean disableCH = hints.getBool(Parameters.CH.DISABLE, false);
+        boolean disableLM = hints.getBool(Parameters.Landmark.DISABLE, false);
+        RoutingAlgorithmFactory routingAlgorithmFactory = graphHopper.getAlgorithmFactory(profile.getName(), disableCH, disableLM);
+        if (routingAlgorithmFactory instanceof CHRoutingAlgorithmFactory) {
             ch = true;
-            routingGraph = graphHopper.getGraphHopperStorage().getCHGraph(((PrepareContractionHierarchies) routingAlgorithmFactory).getCHProfile());
+            routingGraph = graphHopper.getGraphHopperStorage().getCHGraph(((CHRoutingAlgorithmFactory) routingAlgorithmFactory).getCHConfig());
         } else {
             ch = false;
             routingGraph = graphHopper.getGraphHopperStorage();
         }
-        weighting = graphHopper.createWeighting(hints, graphHopper.getEncodingManager().getEncoder(hints.getVehicle()), null);
+        // since map matching does not support turn costs we have to disable them here explicitly
+        weighting = graphHopper.createWeighting(profile, hints, true);
         this.maxVisitedNodes = hints.getInt(Parameters.Routing.MAX_VISITED_NODES, Integer.MAX_VALUE);
     }
 
@@ -177,11 +200,11 @@ public class MapMatching {
         for (Collection<QueryResult> qrs : queriesPerEntry) {
             allQueryResults.addAll(qrs);
         }
-        queryGraph = QueryGraph.lookup(routingGraph, allQueryResults);
+        queryGraph = QueryGraph.create(routingGraph, allQueryResults);
 
         // Different QueryResults can have the same tower node as their closest node.
         // Hence, we now dedupe the query results of each GPX entry by their closest node (#91).
-        // This must be done after calling queryGraph.lookup() since this replaces some of the
+        // This must be done after calling queryGraph.create() since this replaces some of the
         // QueryResult nodes with virtual nodes. Virtual nodes are not deduped since there is at
         // most one QueryResult per edge and virtual nodes are inserted into the middle of an edge.
         // Reducing the number of QueryResults improves performance since less shortest/fastest
@@ -481,13 +504,13 @@ public class MapMatching {
 
                 RoutingAlgorithm router;
                 if (ch) {
-                    router = new DijkstraBidirectionCH(queryGraph, new PreparationWeighting(weighting)) {
+                    RoutingCHGraphImpl g = new RoutingCHGraphImpl(queryGraph, weighting);
+                    router = new DijkstraBidirectionCH(g) {
                         @Override
                         protected void initCollections(int size) {
                             super.initCollections(50);
                         }
                     };
-                    ((DijkstraBidirectionCH) router).setEdgeFilter(new LevelEdgeFilter((CHGraph) routingGraph));
                     router.setMaxVisitedNodes(maxVisitedNodes);
                 } else {
                     router = new DijkstraBidirectionRef(queryGraph, weighting, TraversalMode.NODE_BASED) {
@@ -589,7 +612,7 @@ public class MapMatching {
         // Implementation note: We have to look at both states _and_ transitions, since we can have e.g. just one state,
         // or two states with a transition that is an empty path (observations snapped to the same node in the query graph),
         // but these states still happen on an edge, and for this representation, we want to have that edge.
-        // (Whereas in the PathWrapper representation, we would just see an empty path.)
+        // (Whereas in the ResponsePath representation, we would just see an empty path.)
 
         // Note that the result can be empty, even when the input is not. Observations can be on nodes as well as on
         // edges, and when all observations are on the same node, we get no edge at all.
@@ -740,7 +763,7 @@ public class MapMatching {
             int prevEdge = EdgeIterator.NO_EDGE;
             for (EdgeIteratorState edge : edges) {
                 addDistance(edge.getDistance());
-                addTime(weighting.calcMillis(edge, false, prevEdge));
+                addTime(GHUtility.calcMillisWithTurnMillis(weighting, edge, false, prevEdge));
                 addEdge(edge.getEdge());
                 prevEdge = edge.getEdge();
             }

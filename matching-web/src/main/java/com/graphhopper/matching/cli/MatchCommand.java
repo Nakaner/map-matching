@@ -2,15 +2,17 @@ package com.graphhopper.matching.cli;
 
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.graphhopper.GraphHopper;
-import com.graphhopper.PathWrapper;
+import com.graphhopper.GraphHopperConfig;
+import com.graphhopper.ResponsePath;
+import com.graphhopper.config.Profile;
 import com.graphhopper.matching.MapMatching;
 import com.graphhopper.matching.MatchResult;
 import com.graphhopper.matching.Observation;
 import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.reader.osm.GraphHopperOSM;
-import com.graphhopper.routing.util.FlagEncoder;
-import com.graphhopper.routing.util.HintsMap;
-import com.graphhopper.routing.weighting.FastestWeighting;
+import com.graphhopper.routing.ev.DefaultEncodedValueFactory;
+import com.graphhopper.routing.util.DefaultFlagEncoderFactory;
+import com.graphhopper.routing.util.EncodingManager;
 import com.graphhopper.routing.weighting.Weighting;
 import com.graphhopper.util.*;
 import com.graphhopper.util.gpx.GpxFromInstructions;
@@ -58,24 +60,33 @@ public class MatchCommand extends Command {
                 .type(Double.class)
                 .required(false)
                 .setDefault(2.0);
+        subparser.addArgument("--vehicle")
+                .type(String.class)
+                .required(false)
+                .setDefault("");
     }
 
     @Override
     public void run(Bootstrap bootstrap, Namespace args) {
-        CmdArgs graphHopperConfiguration = new CmdArgs();
-        graphHopperConfiguration.put("graph.location", "graph-cache");
-        GraphHopper hopper = new GraphHopperOSM().init(graphHopperConfiguration);
-        hopper.getCHFactoryDecorator().setEnabled(false);
-        System.out.println("loading graph from cache");
-        hopper.load(graphHopperConfiguration.get("graph.location", "graph-cache"));
+        GraphHopperConfig graphHopperConfiguration = new GraphHopperConfig();
+        String ghFolder = "graph-cache";
+        graphHopperConfiguration.putObject("graph.location", ghFolder);
 
         String vehicle = args.getString("vehicle");
-        FlagEncoder encoder = Helper.isEmpty(vehicle) ? hopper.getEncodingManager().fetchEdgeEncoders().get(0) : hopper.getEncodingManager().getEncoder(vehicle);
+        if (Helper.isEmpty(vehicle))
+            vehicle = EncodingManager.create(new DefaultEncodedValueFactory(), new DefaultFlagEncoderFactory(), ghFolder).fetchEdgeEncoders().get(0).toString();
         // Penalizing inner-link U-turns only works with fastest weighting, since
         // shortest weighting does not apply penalties to unfavored virtual edges.
-        HintsMap hintsMap = new HintsMap().setWeighting("fastest").setVehicle(encoder.toString()).put(MAX_VISITED_NODES, args.getInt("max_visited_nodes"));
-        Weighting weighting = new FastestWeighting(encoder);
-        MapMatching mapMatching = new MapMatching(hopper, hintsMap);
+        String weightingStr = "fastest";
+        Profile profile = new Profile(vehicle + "_profile").setVehicle(vehicle).setWeighting(weightingStr).setTurnCosts(false);
+        graphHopperConfiguration.setProfiles(Collections.singletonList(profile));
+        GraphHopper hopper = new GraphHopperOSM().init(graphHopperConfiguration);
+        System.out.println("loading graph from cache");
+        hopper.load(graphHopperConfiguration.getString("graph.location", ghFolder));
+
+        PMap hints = new PMap().putObject(MAX_VISITED_NODES, args.get("max_visited_nodes"));
+        hints.putObject("profile", profile.getName());
+        MapMatching mapMatching = new MapMatching(hopper, hints);
         mapMatching.setTransitionProbabilityBeta(args.getDouble("transition_probability_beta"));
         mapMatching.setMeasurementErrorSigma(args.getInt("gps_accuracy"));
 
@@ -85,6 +96,8 @@ public class MatchCommand extends Command {
         Translation tr = new TranslationMap().doImport().getWithFallBack(Helper.getLocale(args.getString("instructions")));
         final boolean withRoute = !args.getString("instructions").isEmpty();
         XmlMapper xmlMapper = new XmlMapper();
+
+        Weighting weighting = hopper.createWeighting(hopper.getProfiles().get(0), hints);
 
         for (File gpxFile : args.<File>getList("gpx")) {
             try {
@@ -108,11 +121,11 @@ public class MatchCommand extends Command {
                 String outFile = gpxFile.getAbsolutePath() + ".res.gpx";
                 System.out.println("\texport results to:" + outFile);
 
-                PathWrapper pathWrapper = new PathWrapper();
-                new PathMerger(hopper.getGraphHopperStorage(), weighting).
-                        doWork(pathWrapper, Collections.singletonList(mr.getMergedPath()), hopper.getEncodingManager(), tr);
-                if (pathWrapper.hasErrors()) {
-                    System.err.println("Problem with file " + gpxFile + ", " + pathWrapper.getErrors());
+                ResponsePath responsePath = new ResponsePath();
+                new PathMerger(mr.getGraph(), weighting).
+                        doWork(responsePath, Collections.singletonList(mr.getMergedPath()), hopper.getEncodingManager(), tr);
+                if (responsePath.hasErrors()) {
+                    System.err.println("Problem with file " + gpxFile + ", " + responsePath.getErrors());
                     continue;
                 }
 
@@ -120,7 +133,7 @@ public class MatchCommand extends Command {
                     long time = gpx.trk.get(0).getStartTime()
                             .map(Date::getTime)
                             .orElse(System.currentTimeMillis());
-                    writer.append(GpxFromInstructions.createGPX(pathWrapper.getInstructions(), gpx.trk.get(0).name != null ? gpx.trk.get(0).name : "", time, hopper.hasElevation(), withRoute, true, false, Constants.VERSION, tr));
+                    writer.append(GpxFromInstructions.createGPX(responsePath.getInstructions(), gpx.trk.get(0).name != null ? gpx.trk.get(0).name : "", time, hopper.hasElevation(), withRoute, true, false, Constants.VERSION, tr));
                 }
             } catch (Exception ex) {
                 importSW.stop();

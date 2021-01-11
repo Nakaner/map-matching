@@ -19,14 +19,20 @@ package com.graphhopper.matching;
 
 import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.graphhopper.GraphHopper;
+import com.graphhopper.config.CHProfile;
+import com.graphhopper.config.Profile;
 import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.reader.osm.GraphHopperOSM;
 import com.graphhopper.routing.util.CarFlagEncoder;
 import com.graphhopper.routing.util.EncodingManager;
-import com.graphhopper.routing.util.HintsMap;
 import com.graphhopper.storage.index.QueryResult;
+import com.graphhopper.util.Helper;
+import com.graphhopper.util.PMap;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Arrays;
 
@@ -37,21 +43,28 @@ import static org.junit.Assert.*;
  * @author Peter Karich
  */
 public class MapMatching2Test {
-
+    private static final String GH_LOCATION = "../target/mapmatchingtest2-gh";
     private XmlMapper xmlMapper = new XmlMapper();
+
+    @Before
+    @After
+    public void clean() {
+        Helper.removeDir(new File(GH_LOCATION));
+    }
 
     @Test
     public void testIssue13() throws IOException {
         CarFlagEncoder encoder = new CarFlagEncoder();
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/map-issue13.osm.gz");
-        hopper.setGraphHopperLocation("../target/mapmatchingtest-13");
+        hopper.setGraphHopperLocation(GH_LOCATION);
         hopper.setEncodingManager(EncodingManager.create(encoder));
-        hopper.getCHFactoryDecorator().setDisablingAllowed(true);
+        hopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
+        hopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
+        hopper.getCHPreparationHandler().setDisablingAllowed(true);
         hopper.importOrLoad();
 
-        HintsMap opts = new HintsMap();
-        MapMatching mapMatching = new MapMatching(hopper, opts);
+        MapMatching mapMatching = new MapMatching(hopper, new PMap().putObject("profile", "my_profile"));
 
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/issue-13.gpx"), Gpx.class);
         MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
@@ -76,13 +89,14 @@ public class MapMatching2Test {
         CarFlagEncoder encoder = new CarFlagEncoder();
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/issue-70.osm.gz");
-        hopper.setGraphHopperLocation("../target/mapmatchingtest-70");
+        hopper.setGraphHopperLocation(GH_LOCATION);
         hopper.setEncodingManager(EncodingManager.create(encoder));
-        hopper.getCHFactoryDecorator().setDisablingAllowed(true);
+        hopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
+        hopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
+        hopper.getCHPreparationHandler().setDisablingAllowed(true);
         hopper.importOrLoad();
 
-        HintsMap opts = new HintsMap();
-        MapMatching mapMatching = new MapMatching(hopper, opts);
+        MapMatching mapMatching = new MapMatching(hopper, new PMap().putObject("profile", "my_profile"));
 
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/issue-70.gpx"), Gpx.class);
         MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
@@ -102,13 +116,14 @@ public class MapMatching2Test {
         CarFlagEncoder encoder = new CarFlagEncoder();
         GraphHopper hopper = new GraphHopperOSM();
         hopper.setDataReaderFile("../map-data/map-issue13.osm.gz");
-        hopper.setGraphHopperLocation("../target/mapmatchingtest-127");
+        hopper.setGraphHopperLocation(GH_LOCATION);
         hopper.setEncodingManager(EncodingManager.create(encoder));
-        hopper.getCHFactoryDecorator().setDisablingAllowed(true);
+        hopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
+        hopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
+        hopper.getCHPreparationHandler().setDisablingAllowed(true);
         hopper.importOrLoad();
 
-        HintsMap opts = new HintsMap();
-        MapMatching mapMatching = new MapMatching(hopper, opts);
+        MapMatching mapMatching = new MapMatching(hopper, new PMap().putObject("profile", "my_profile"));
 
         // query with two identical points
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/issue-127.gpx"), Gpx.class);

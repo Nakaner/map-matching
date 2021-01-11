@@ -18,8 +18,8 @@
 package com.graphhopper.matching.http;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.graphhopper.config.Profile;
 import com.graphhopper.http.WebHelper;
-import com.graphhopper.util.CmdArgs;
 import com.graphhopper.util.Helper;
 import io.dropwizard.testing.junit.DropwizardAppRule;
 import org.junit.AfterClass;
@@ -29,28 +29,29 @@ import org.junit.Test;
 import javax.ws.rs.client.Entity;
 import javax.ws.rs.core.Response;
 import java.io.File;
+import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
 
 /**
  * @author Peter Karich
  */
-public class MapMatchingResource2Test {
+public class MapMatchingResourceBikeTest {
 
     private static final String DIR = "../target/mapmatching2test";
 
-    private static final MapMatchingServerConfiguration config = new MapMatchingServerConfiguration();
-
-    static {
-        config.getGraphHopperConfiguration().merge(new CmdArgs().
-                put("graph.flag_encoders", "bike").
-                put("datareader.file", "../map-data/leipzig_germany.osm.pbf").
-                put("graph.location", DIR));
+    private static MapMatchingServerConfiguration createConfig() {
+        MapMatchingServerConfiguration config = new MapMatchingServerConfiguration();
+        config.getGraphHopperConfiguration().
+                putObject("graph.flag_encoders", "bike").
+                putObject("datareader.file", "../map-data/leipzig_germany.osm.pbf").
+                putObject("graph.location", DIR).
+                setProfiles(Collections.singletonList(new Profile("fast_bike").setVehicle("bike").setWeighting("fastest")));
+        return config;
     }
 
     @ClassRule
-    public static final DropwizardAppRule<MapMatchingServerConfiguration> app = new DropwizardAppRule(MapMatchingApplication.class, config);
+    public static final DropwizardAppRule<MapMatchingServerConfiguration> app = new DropwizardAppRule(MapMatchingApplication.class, createConfig());
 
     @AfterClass
     public static void cleanUp() {

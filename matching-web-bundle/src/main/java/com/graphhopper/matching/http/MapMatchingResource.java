@@ -23,11 +23,11 @@ import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
-import com.graphhopper.PathWrapper;
+import com.graphhopper.ResponsePath;
 import com.graphhopper.http.WebHelper;
 import com.graphhopper.matching.*;
 import com.graphhopper.matching.gpx.Gpx;
-import com.graphhopper.routing.util.HintsMap;
+import com.graphhopper.routing.ProfileResolver;
 import com.graphhopper.util.*;
 import com.graphhopper.util.gpx.GpxFromInstructions;
 import org.slf4j.Logger;
@@ -53,11 +53,13 @@ public class MapMatchingResource {
     private static final Logger logger = LoggerFactory.getLogger(MapMatchingResource.class);
 
     private final GraphHopper graphHopper;
+    private final ProfileResolver profileResolver;
     private final TranslationMap trMap;
 
     @Inject
-    public MapMatchingResource(GraphHopper graphHopper, TranslationMap trMap) {
+    public MapMatchingResource(GraphHopper graphHopper, ProfileResolver profileResolver, TranslationMap trMap) {
         this.graphHopper = graphHopper;
+        this.profileResolver = profileResolver;
         this.trMap = trMap;
     }
 
@@ -95,9 +97,17 @@ public class MapMatchingResource {
 
         StopWatch sw = new StopWatch().start();
 
-        MapMatching matching = new MapMatching(graphHopper,
-                // set default values from annotation for certain keys
-                createHintsMap(uriInfo.getQueryParameters()).setVehicle(vehicleStr).put(MAX_VISITED_NODES, maxVisitedNodes));
+        PMap hints = createHintsMap(uriInfo.getQueryParameters());
+        // add values that are not in hints because they were explicitly listed in query params
+        hints.putObject("vehicle", vehicleStr);
+        hints.putObject(MAX_VISITED_NODES, maxVisitedNodes);
+        // resolve profile and remove legacy vehicle/weighting parameters
+        String profile = profileResolver.resolveProfile(hints).getName();
+        hints.remove("vehicle");
+        hints.remove("weighting");
+        hints.putObject("profile", profile);
+
+        MapMatching matching = new MapMatching(graphHopper, hints);
         matching.setMeasurementErrorSigma(gpsAccuracy);
 
         List<Observation> measurements = gpx.trk.get(0).getEntries();
@@ -121,14 +131,14 @@ public class MapMatchingResource {
                     setPathDetailsBuilders(graphHopper.getPathDetailsBuilderFactory(), pathDetails).
                     setDouglasPeucker(peucker).
                     setSimplifyResponse(minPathPrecision > 0);
-            PathWrapper pathWrapper = new PathWrapper();
-            pathMerger.doWork(pathWrapper, Collections.singletonList(matchResult.getMergedPath()), graphHopper.getEncodingManager(), tr);
+            ResponsePath responsePath = new ResponsePath();
+            pathMerger.doWork(responsePath, Collections.singletonList(matchResult.getMergedPath()), graphHopper.getEncodingManager(), tr);
 
             // GraphHopper thinks an empty path is an invalid path, and further that an invalid path is still a path but
             // marked with a non-empty list of Exception objects. I disagree, so I clear it.
-            pathWrapper.getErrors().clear();
+            responsePath.getErrors().clear();
             GHResponse rsp = new GHResponse();
-            rsp.add(pathWrapper);
+            rsp.add(responsePath);
 
             if (writeGPX) {
                 long time = gpx.trk.get(0).getStartTime()
@@ -162,11 +172,11 @@ public class MapMatchingResource {
         }
     }
 
-    private HintsMap createHintsMap(MultivaluedMap<String, String> queryParameters) {
-        HintsMap m = new HintsMap();
+    private PMap createHintsMap(MultivaluedMap<String, String> queryParameters) {
+        PMap m = new PMap();
         for (Map.Entry<String, List<String>> e : queryParameters.entrySet()) {
             if (e.getValue().size() == 1) {
-                m.put(e.getKey(), e.getValue().get(0));
+                m.putObject(Helper.camelCaseToUnderScore(e.getKey()), Helper.toObject(e.getValue().get(0)));
             } else {
                 // TODO ugly: ignore multi parameters like point to avoid exception. See RouteResource.initHints
             }
@@ -183,7 +193,7 @@ public class MapMatchingResource {
         for (int emIndex = 0; emIndex < result.getEdgeMatches().size(); emIndex++) {
             ObjectNode link = links.addObject();
             EdgeMatch edgeMatch = result.getEdgeMatches().get(emIndex);
-            PointList pointList = edgeMatch.getEdgeState().fetchWayGeometry(emIndex == 0 ? 3 : 2);
+            PointList pointList = edgeMatch.getEdgeState().fetchWayGeometry(emIndex == 0 ? FetchMode.ALL : FetchMode.PILLAR_AND_ADJ);
             final ObjectNode geometry = link.putObject("geometry");
             if (pointList.size() < 2) {
                 geometry.putPOJO("coordinates", pointsEncoded ? WebHelper.encodePolyline(pointList, elevation) : pointList.toLineString(elevation));

@@ -20,13 +20,18 @@ package com.graphhopper.matching;
 
 import com.graphhopper.GHRequest;
 import com.graphhopper.GraphHopper;
-import com.graphhopper.PathWrapper;
+import com.graphhopper.ResponsePath;
+import com.graphhopper.config.CHProfile;
+import com.graphhopper.config.Profile;
 import com.graphhopper.reader.osm.GraphHopperOSM;
 import com.graphhopper.routing.util.CarFlagEncoder;
 import com.graphhopper.routing.util.EncodingManager;
+import com.graphhopper.util.Helper;
 import com.graphhopper.util.shapes.GHPoint;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.io.File;
 
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
@@ -36,42 +41,46 @@ import static org.hamcrest.core.Is.is;
 
 public class RoutingAdditivityTest {
 
+    private static final String GH_LOCATION = "../target/routing-additivity-test-gh";
     private GraphHopper graphHopper;
 
     @Before
     public void setup() {
+        Helper.removeDir(new File(GH_LOCATION));
         CarFlagEncoder encoder = new CarFlagEncoder();
         graphHopper = new GraphHopperOSM();
         graphHopper.setDataReaderFile("../map-data/leipzig_germany.osm.pbf");
-        graphHopper.setGraphHopperLocation("../target/mapmatchingtest-ch");
+        graphHopper.setGraphHopperLocation(GH_LOCATION);
         graphHopper.setEncodingManager(EncodingManager.create(encoder));
-        graphHopper.getCHFactoryDecorator().setDisablingAllowed(true);
+        graphHopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
+        graphHopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
+        graphHopper.getCHPreparationHandler().setDisablingAllowed(true);
         graphHopper.importOrLoad();
     }
 
 
     @Test
     public void testBoundedAdditivityOfGraphhopperTravelTimes() {
-        PathWrapper route1 = graphHopper.route(new GHRequest(
+        ResponsePath route1 = graphHopper.route(new GHRequest(
                 new GHPoint(51.23, 12.18),
                 new GHPoint(51.45, 12.59))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
 
         // Re-route from snapped point to snapped point.
         // It's the only way to be sure.
-        PathWrapper route2 = graphHopper.route(new GHRequest(
+        ResponsePath route2 = graphHopper.route(new GHRequest(
                 route1.getWaypoints().get(0),
                 route1.getWaypoints().get(1))
-                .setWeighting("fastest")).getBest();
+                .setProfile("my_profile")).getBest();
 
         assertThat(route1.getTime(), is(equalTo(route2.getTime())));
 
         long travelTime = 0L;
-        for (int i = 0; i < route2.getPoints().size()-1; i++) {
-            PathWrapper segment = graphHopper.route(new GHRequest(
+        for (int i = 0; i < route2.getPoints().size() - 1; i++) {
+            ResponsePath segment = graphHopper.route(new GHRequest(
                     route2.getPoints().get(i),
                     route2.getPoints().get(i + 1))
-                    .setWeighting("fastest")).getBest();
+                    .setProfile("my_profile")).getBest();
             travelTime += segment.getTime();
         }
 

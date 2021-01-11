@@ -1,12 +1,16 @@
 package com.graphhopper.matching.cli;
 
 import com.graphhopper.GraphHopper;
+import com.graphhopper.GraphHopperConfig;
+import com.graphhopper.config.Profile;
 import com.graphhopper.reader.osm.GraphHopperOSM;
-import com.graphhopper.util.CmdArgs;
 import io.dropwizard.cli.Command;
 import io.dropwizard.setup.Bootstrap;
 import net.sourceforge.argparse4j.inf.Namespace;
 import net.sourceforge.argparse4j.inf.Subparser;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class ImportCommand extends Command {
 
@@ -27,13 +31,20 @@ public class ImportCommand extends Command {
 
     @Override
     public void run(Bootstrap<?> bootstrap, Namespace args) {
-        CmdArgs graphHopperConfiguration = new CmdArgs();
-        graphHopperConfiguration.put("graph.flag_encoders", args.getString("vehicle"));
-        graphHopperConfiguration.put("datareader.file", args.getString("datasource"));
-        graphHopperConfiguration.put("graph.location", "graph-cache");
-
+        GraphHopperConfig graphHopperConfiguration = new GraphHopperConfig();
+        String vehicle = args.getString("vehicle");
+        graphHopperConfiguration.putObject("graph.flag_encoders", vehicle);
+        graphHopperConfiguration.putObject("datareader.file", args.getString("datasource"));
+        graphHopperConfiguration.putObject("graph.location", "graph-cache");
+        // always using fastest weighting, see comment in MatchCommand
+        String weightingStr = "fastest";
+        List<Profile> profiles = new ArrayList<>();
+        for (String v : vehicle.split(",")) {
+            v = v.trim();
+            profiles.add(new Profile(v + "_profile").setVehicle(v).setWeighting(weightingStr));
+        }
+        graphHopperConfiguration.setProfiles(profiles);
         GraphHopper hopper = new GraphHopperOSM().init(graphHopperConfiguration);
-        hopper.getCHFactoryDecorator().setEnabled(false);
         hopper.importOrLoad();
     }
 

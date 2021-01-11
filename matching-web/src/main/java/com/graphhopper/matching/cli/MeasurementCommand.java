@@ -20,6 +20,8 @@ package com.graphhopper.matching.cli;
 import com.graphhopper.GHRequest;
 import com.graphhopper.GHResponse;
 import com.graphhopper.GraphHopper;
+import com.graphhopper.GraphHopperConfig;
+import com.graphhopper.config.Profile;
 import com.graphhopper.matching.MapMatching;
 import com.graphhopper.matching.MatchResult;
 import com.graphhopper.matching.Observation;
@@ -41,12 +43,8 @@ import org.slf4j.LoggerFactory;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Random;
-import java.util.TreeMap;
 
 /**
  * @author Peter Karisch
@@ -85,22 +83,21 @@ public class MeasurementCommand extends Command {
     @Override
     public void run(Bootstrap bootstrap, Namespace args) {
         // read and initialize arguments:
-        CmdArgs graphHopperConfiguration = new CmdArgs();
-        graphHopperConfiguration.put("graph.location", "graph-cache");
+        GraphHopperConfig graphHopperConfiguration = new GraphHopperConfig();
+        graphHopperConfiguration.setProfiles(Collections.singletonList(new Profile("fast_car").setVehicle("car").setWeighting("fastest")));
+        graphHopperConfiguration.putObject("graph.location", "graph-cache");
         seed = args.getLong("seed");
         count = args.getInt("count");
 
         GraphHopper graphHopper = new GraphHopperOSM();
         graphHopper.init(graphHopperConfiguration).forDesktop();
-        graphHopper.getCHFactoryDecorator().setEnabled(false);
-        graphHopper.getCHFactoryDecorator().setDisablingAllowed(true);
         graphHopper.importOrLoad();
         
         // and map-matching stuff
         GraphHopperStorage graph = graphHopper.getGraphHopperStorage();
         bbox = graph.getBounds();
         LocationIndexTree locationIndex = (LocationIndexTree) graphHopper.getLocationIndex();
-        MapMatching mapMatching = new MapMatching(graphHopper, new HintsMap());
+        MapMatching mapMatching = new MapMatching(graphHopper, new PMap().putObject("profile", "fast_car"));
         
         // start tests:
         StopWatch sw = new StopWatch().start();
