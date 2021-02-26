@@ -112,7 +112,7 @@ public class MatchCommand extends Command {
                 List<Observation> measurements = gpx.trk.get(0).getEntries();
                 importSW.stop();
                 matchSW.start();
-                MatchResult mr = mapMatching.doWork(measurements);
+                MatchResult mr = mapMatching.match(measurements);
                 matchSW.stop();
                 System.out.println(gpxFile);
                 System.out.println("\tmatches:\t" + mr.getEdgeMatches().size() + ", gps entries:" + measurements.size());
@@ -121,9 +121,8 @@ public class MatchCommand extends Command {
                 String outFile = gpxFile.getAbsolutePath() + ".res.gpx";
                 System.out.println("\texport results to:" + outFile);
 
-                ResponsePath responsePath = new ResponsePath();
-                new PathMerger(mr.getGraph(), weighting).
-                        doWork(responsePath, Collections.singletonList(mr.getMergedPath()), hopper.getEncodingManager(), tr);
+                ResponsePath responsePath = new PathMerger(mr.getGraph(), weighting).
+                        doWork(PointList.EMPTY, Collections.singletonList(mr.getMergedPath()), hopper.getEncodingManager(), tr);
                 if (responsePath.hasErrors()) {
                     System.err.println("Problem with file " + gpxFile + ", " + responsePath.getErrors());
                     continue;

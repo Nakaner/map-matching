@@ -21,7 +21,7 @@ import com.fasterxml.jackson.dataformat.xml.XmlMapper;
 import com.graphhopper.GHRequest;
 import com.graphhopper.GraphHopper;
 import com.graphhopper.ResponsePath;
-import com.graphhopper.config.CHProfile;
+import com.graphhopper.config.LMProfile;
 import com.graphhopper.config.Profile;
 import com.graphhopper.matching.gpx.Gpx;
 import com.graphhopper.reader.osm.GraphHopperOSM;
@@ -71,8 +71,8 @@ public class MapMatchingTest {
         graphHopper.setGraphHopperLocation(GH_LOCATION);
         graphHopper.setEncodingManager(EncodingManager.create(encoder));
         graphHopper.setProfiles(new Profile("my_profile").setVehicle("car").setWeighting("fastest"));
-        graphHopper.getCHPreparationHandler().setCHProfiles(new CHProfile("my_profile"));
-        graphHopper.getCHPreparationHandler().setDisablingAllowed(true);
+        graphHopper.getLMPreparationHandler().setLMProfiles(new LMProfile("my_profile"));
+        graphHopper.getRouterConfig().setLMDisablingAllowed(true);
         graphHopper.importOrLoad();
     }
 
@@ -84,8 +84,8 @@ public class MapMatchingTest {
     @Parameterized.Parameters(name = "{0}")
     public static Collection<Object[]> algoOptions() {
         return Arrays.asList(new Object[][]{
-                {"non-CH", new PMap().putObject(Parameters.CH.DISABLE, true)},
-                {"CH", new PMap().putObject(Parameters.CH.DISABLE, false)}
+                {"non-LM", new PMap().putObject(Parameters.Landmark.DISABLE, true)},
+                {"LM", new PMap().putObject(Parameters.Landmark.DISABLE, false)}
         });
     }
 
@@ -105,7 +105,7 @@ public class MapMatchingTest {
                 new GHPoint(51.358594, 12.360032))
                 .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route2);
-        MatchResult mr = mapMatching.doWork(inputGPXEntries);
+        MatchResult mr = mapMatching.match(inputGPXEntries);
 
         // make sure no virtual edges are returned
         int edgeCount = graphHopper.getGraphHopperStorage().getAllEdges().length();
@@ -119,8 +119,8 @@ public class MapMatchingTest {
                 fetchStreets(mr.getEdgeMatches()));
         assertEquals(mr.getGpxEntriesLength(), mr.getMatchLength(), 1.5);
 
-        ResponsePath matchGHRsp = new ResponsePath();
-        new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()), graphHopper.getEncodingManager(), translationMap.get("en"));
+        ResponsePath matchGHRsp =
+                new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(PointList.EMPTY, Collections.singletonList(mr.getMergedPath()), graphHopper.getEncodingManager(), translationMap.get("en"));
         InstructionList il = matchGHRsp.getInstructions();
 
         assertEquals(il.toString(), 2, il.size());
@@ -132,15 +132,15 @@ public class MapMatchingTest {
                 .setProfile("my_profile")).getBest();
         inputGPXEntries = createRandomGPXEntriesAlongRoute(route1);
         mapMatching.setMeasurementErrorSigma(5);
-        mr = mapMatching.doWork(inputGPXEntries);
+        mr = mapMatching.match(inputGPXEntries);
 
         assertEquals(Arrays.asList("Windmühlenstraße", "Windmühlenstraße", "Bayrischer Platz",
                 "Bayrischer Platz", "Bayrischer Platz"), fetchStreets(mr.getEdgeMatches()));
         assertEquals(mr.getGpxEntriesLength(), mr.getMatchLength(), .1);
 
-        matchGHRsp = new ResponsePath();
-        new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(matchGHRsp, Collections.singletonList(mr.getMergedPath()),
-                graphHopper.getEncodingManager(), translationMap.get("en"));
+        matchGHRsp =
+                new PathMerger(mr.getGraph(), mr.getWeighting()).doWork(PointList.EMPTY, Collections.singletonList(mr.getMergedPath()),
+                        graphHopper.getEncodingManager(), translationMap.get("en"));
         il = matchGHRsp.getInstructions();
 
         assertEquals(il.toString(), 3, il.size());
@@ -154,7 +154,7 @@ public class MapMatchingTest {
         inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
         mapMatching = new MapMatching(graphHopper, hints);
         mapMatching.setMeasurementErrorSigma(20);
-        mr = mapMatching.doWork(inputGPXEntries);
+        mr = mapMatching.match(inputGPXEntries);
 
         assertEquals(route.getDistance(), mr.getMatchLength(), 0.5);
         // GraphHopper travel times aren't exactly additive
@@ -180,7 +180,7 @@ public class MapMatchingTest {
                 new GHPoint(51.45, 12.59))
                 .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
-        MatchResult mr = mapMatching.doWork(inputGPXEntries);
+        MatchResult mr = mapMatching.match(inputGPXEntries);
 
         assertEquals(route.getDistance(), mr.getMatchLength(), 2);
         // GraphHopper travel times aren't exactly additive
@@ -190,7 +190,7 @@ public class MapMatchingTest {
         PMap opts = new PMap(hints).putObject(Parameters.Routing.MAX_VISITED_NODES, 1);
         mapMatching = new MapMatching(graphHopper, opts);
         try {
-            mr = mapMatching.doWork(inputGPXEntries);
+            mr = mapMatching.match(inputGPXEntries);
             fail("Expected sequence to be broken due to maxVisitedNodes being too small");
         } catch (RuntimeException e) {
             assertTrue(e.getMessage().startsWith("Sequence is broken for submitted track"));
@@ -209,7 +209,7 @@ public class MapMatchingTest {
                 new GHPoint(51.342328, 12.3613358))
                 .setProfile("my_profile")).getBest();
         List<Observation> inputGPXEntries = createRandomGPXEntriesAlongRoute(route);
-        MatchResult mr = mapMatching.doWork(inputGPXEntries);
+        MatchResult mr = mapMatching.match(inputGPXEntries);
 
         assertFalse(mr.getEdgeMatches().isEmpty());
         assertEquals(3, mr.getMatchLength(), 1);
@@ -228,7 +228,7 @@ public class MapMatchingTest {
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour3-with-long-edge.gpx"), Gpx.class);
         MapMatching mapMatching = new MapMatching(graphHopper, hints);
         mapMatching.setMeasurementErrorSigma(20);
-        MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
+        MatchResult mr = mapMatching.match(gpx.trk.get(0).getEntries());
         assertEquals(Arrays.asList("Weinligstraße", "Weinligstraße", "Weinligstraße",
                 "Fechnerstraße", "Fechnerstraße"), fetchStreets(mr.getEdgeMatches()));
         assertEquals(mr.getGpxEntriesLength(), mr.getMatchLength(), 11); // TODO: this should be around 300m according to Google ... need to check
@@ -246,7 +246,7 @@ public class MapMatchingTest {
         mapMatching.setMeasurementErrorSigma(40);
 
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour2-with-loop.gpx"), Gpx.class);
-        MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
+        MatchResult mr = mapMatching.match(gpx.trk.get(0).getEntries());
         assertEquals(
                 Arrays.asList("Gustav-Adolf-Straße", "Gustav-Adolf-Straße", "Gustav-Adolf-Straße",
                         "Leibnizstraße", "Hinrichsenstraße", "Hinrichsenstraße",
@@ -265,7 +265,7 @@ public class MapMatchingTest {
         // TODO smaller sigma like 40m leads to U-turn at Tschaikowskistraße
         mapMatching.setMeasurementErrorSigma(50);
         Gpx gpx = xmlMapper.readValue(getClass().getResourceAsStream("/tour-with-loop.gpx"), Gpx.class);
-        MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
+        MatchResult mr = mapMatching.match(gpx.trk.get(0).getEntries());
         assertEquals(Arrays.asList("Jahnallee, B 87, B 181", "Jahnallee, B 87, B 181",
                 "Jahnallee, B 87, B 181", "Jahnallee, B 87, B 181", "Funkenburgstraße",
                 "Gustav-Adolf-Straße", "Tschaikowskistraße", "Jahnallee, B 87, B 181",
@@ -289,14 +289,14 @@ public class MapMatchingTest {
 
         // with large measurement error, we expect no U-turn
         mapMatching.setMeasurementErrorSigma(50);
-        MatchResult mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
+        MatchResult mr = mapMatching.match(gpx.trk.get(0).getEntries());
 
         assertEquals(Arrays.asList("Gustav-Adolf-Straße", "Gustav-Adolf-Straße", "Funkenburgstraße",
                 "Funkenburgstraße"), fetchStreets(mr.getEdgeMatches()));
 
         // with small measurement error, we expect the U-turn
         mapMatching.setMeasurementErrorSigma(10);
-        mr = mapMatching.doWork(gpx.trk.get(0).getEntries());
+        mr = mapMatching.match(gpx.trk.get(0).getEntries());
 
         assertEquals(
                 Arrays.asList("Gustav-Adolf-Straße", "Gustav-Adolf-Straße", "Funkenburgstraße",
