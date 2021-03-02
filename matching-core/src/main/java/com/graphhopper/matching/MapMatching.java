@@ -401,7 +401,7 @@ public class MapMatching {
             prevTimeStep = timeStep;
         }
 
-        matchedUpTo = timeStepCounter - 1;
+        matchedUpTo = timeStepCounter;
         return viterbi.computeMostLikelySequence();
     }
 
