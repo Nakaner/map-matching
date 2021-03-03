@@ -173,7 +173,7 @@ public class MapMatching {
     }
 
     public boolean hasPointsToBeMatched() {
-        return matchedUpTo < getPointCount() - 1;
+        return matchedUpTo < getPointCount();
     }
 
     /**
