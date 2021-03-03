@@ -20,7 +20,7 @@
     <groupId>com.graphhopper.external</groupId>
     <artifactId>hmm-lib</artifactId>
     <!-- SNAPSHOT is necessary otherwise it says: Deployment failed: repository element was not specified in the POM inside distributionManagement element-->
-    <version>2.0-fill-matching-gaps</version>
+    <version>2.3-fill-matching-gaps</version>
     <packaging>jar</packaging>
   
     <name>hmm-lib</name>
